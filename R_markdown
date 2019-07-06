@@ -1,0 +1,486 @@
+---
+title: "Flowmeter"
+author: "Owen Jenkins"
+date: "12 March 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+#set working directory
+```{r}
+setwd("F:/University/CMM535 Data science development/Flowmeters")
+getwd()
+```
+```{r}
+Sys.setenv(JAVA_HOME='C:\\Program Files\\Java\\jre7')
+load.libraries <- c('tidyverse', 'gridExtra', 'corrplot', 'caret', 'GGally', 'ggplot2', 'dplyr', 'RWeka')
+install.lib <- load.libraries[!load.libraries %in% installed.packages()]
+for(libs in install.lib) install.packages(libs, dependences = TRUE)
+sapply(load.libraries, require, character = TRUE)
+```
+
+#read in data from file
+```{r}
+dfC <- read.delim("Meter C", header = FALSE)
+dfD <- read.delim("Meter D", header = FALSE)
+
+
+
+df <- rbind(dfC, dfD)
+rm(dfC, dfD)
+```
+
+#rename filenames
+```{r}
+names(df) <- c("Profile_factor", "Symmetry", "Crossflow", 
+               "FV1", "FV2", "FV3","FV4",
+               "vsnd1", "vsnd2", "vsnd3", "vsnd4",
+               "sigstr1", "sigstr2", "sigstr3","sigstr4","sigstr5", "sigstr6", "sigstr7","sigstr8",
+               "sigqual1", "sigqual2", "sigqual3", "sigqual4","sigqual5", "sigqual6", "sigqual7", "sigqual8",
+               "gain1", "gain2", "gain3", "gain4","gain5", "gain6", "gain7", "gain8",
+               "transtime1", "transtime2", "transtime3", "transtime4","transtime5", "transtime6", "transtime7", "transtime8",
+               "Meter_State")
+```
+
+
+```{r}
+str(df)
+colSums(sapply(df, is.na))
+```
+
+
+
+
+#Plot correlation matrix of variables and 
+```{r}
+#calculate Pearsons correlation coefficients for data frame, marking uncorrelated variables with an X at 95% confidence
+res1 <- cor.mtest(df, conf.level = 0.95)
+
+#Generate correlation matrix for data frame
+correlation_matrix <- corrplot(corr = cor(df),
+                               p.mat = res1$p,
+                               method = "color",
+                               tl.col = "black",
+                               tl.srt = 45,
+                               type = "lower",
+                               title = "Correlation matrix of flowmeter attributes, (uncorrelated attributes marked with X at 95% C.I.",
+                               tl.cex = 0.7)
+```
+
+#Plot class attribute distribution
+```{r}
+a <- ggplot(data = df, aes(x = Meter_State)) +
+  geom_bar(stat = "count", fill = "green") +
+  theme_light() +
+  labs(title = "Plot of Meter state distribution")
+a
+```
+#create boxplots of variables
+```{r}
+plotbxp <- function(data_in, i, j = ncol(data_in)) {
+  p <- ggplot(data_in, aes(x=data_in[[j]], y=data_in[[i]], fill = data_in[[j]])) + 
+    stat_boxplot(geom = 'errorbar') + geom_boxplot() + 
+    xlab(colnames(data_in)[j]) + ylab(colnames(data_in)[i]) +
+    stat_summary(fun.y=mean, colour="darkred", geom="point", hape=18, size=3,show_guide = FALSE) +
+    stat_summary(fun.y=mean, colour="red", geom="text", show_guide = FALSE, vjust=-0.7, aes( label=round(..y.., digits=1))) + 
+    theme(legend.position = "none")
+  
+  
+  return (p)
+}
+```
+
+#display boxplots as grids
+```{r}
+doPlots <- function(data_in, fun, ii, ncol=3) {
+  pp <- list()
+  for (i in ii) {
+    p <- fun(data_in=data_in, i=i)
+    pp <- c(pp, list(p))
+  }
+  do.call("grid.arrange", c(pp, ncol=ncol))
+}
+```
+
+#plot reaction time of participant (tau), price elasticity (g) and power consumed (p) values in boxplots
+```{r}
+doPlots(df, fun = plotbxp, ii = 1:3, ncol = 2)
+doPlots(df, fun = plotbxp, ii = 4:7, ncol = 2)
+doPlots(df, fun = plotbxp, ii = 8:11, ncol = 2)
+doPlots(df, fun = plotbxp, ii = 12:19, ncol = 4)
+doPlots(df, fun = plotbxp, ii = 20:27, ncol = 4)
+doPlots(df, fun = plotbxp, ii = 28:35, ncol = 4)
+doPlots(df, fun = plotbxp, ii = 36:43, ncol = 4)
+```
+
+
+
+#######################################Introduce noise to dataset###########################################################################
+```{r}
+noisydata <- df
+```
+
+
+
+#Create function that creates a percentage of normal randomly distributed noise in a variable (indexed value)
+```{r}
+nnoise <- function(data_in, i, j){
+#set the seed to 0
+ set.seed(0)
+
+#create a copy of the dataframe
+  noisydata <- data_in
+
+#Choose % of instances to corrupt from a binomial distribution
+ corrupt <- rbinom(nrow(noisydata),1, j)
+ 
+#convert to boolean logic
+ corrupt <- as.logical(corrupt)
+ 
+#introduce normally distributed noise for each of the corrupted attributes
+ noise <- rnorm(corrupt, median(noisydata[[i]]), sd(noisydata[[i]]))
+ noisydata[[i]][corrupt] <- as.integer(noise[corrupt])
+ return(noisydata)
+}
+```
+
+#Create noise in all predictive variables
+```{r}
+for(i in 1:43) {
+noisydata <- nnoise(noisydata, i, 0.08)
+}
+```
+
+
+```{r}
+#Create plots of baseline predictive attributes against "noisified" predictive attributes
+
+noisydata$ID <- seq.int(nrow(noisydata))
+df$ID <- seq.int(nrow(df))
+
+b <- ggplot() + 
+   geom_smooth(data = df, aes(ID, Profile_factor), color = "red") +
+   geom_smooth(data = noisydata, aes(ID, Profile_factor), color = "blue") +
+   theme_light() 
+b
+ 
+c <- ggplot() +
+   geom_smooth(data = df, aes(ID, sigqual5), color = "red") +
+   geom_smooth(data = noisydata, aes(ID, sigqual5), color = "blue") +
+   theme_light()
+
+
+d <- ggplot() +
+   geom_smooth(data = df, aes(ID, transtime8), color = "red") +
+   geom_smooth(data = noisydata, aes(ID, transtime8), color = "blue") +
+   theme_light()
+
+e <- ggplot() +
+   geom_smooth(data = df, aes(ID, gain2), color = "red") +
+   geom_smooth(data = noisydata, aes(ID, gain2), color = "blue") +
+   theme_light()
+
+grid.arrange(b,c,d,e, nrow = 2, ncol = 2, top = "noisified attributes")
+
+noisydata$ID <- NULL
+df$ID <- NULL
+
+```
+
+
+```{r}
+#Reassign noisified data back to dataframe label
+ df <- noisydata
+```
+
+
+################################################Conduct PCA of dataset###################################################################
+
+
+
+```{r}
+#conduct PCA on values in dataframe
+pca.flowmeters <- prcomp(df[,-44], center = TRUE, scale = TRUE)
+#View(pca.flowmeters$rotation)
+
+#Visualisation of principal components is too messy 
+#ggbiplot(pca.flowmeters, groups = df$Meter_State, choice = c(1,2))
+```
+
+
+
+
+```{r}
+#display summary of PCA
+summary(pca.flowmeters)
+```
+
+
+```{r}
+#calculate standard deviation of principal components
+std_dev <- pca.flowmeters$sdev
+#calculate variance
+pr_var <- std_dev^2
+
+#calculate cumulative proportion of variance explained by each principal component
+prop_var_ex <- as.data.frame(pr_var/sum(pr_var))
+
+#add row id as column to data frame, change to first row and rename variables
+prop_var_ex$Principal_component <- seq.int(nrow(prop_var_ex))
+prop_var_ex <- prop_var_ex[c(2,1)]
+names(prop_var_ex)[2] <- "Proportion_of_variance_explained"
+
+#Create Scree plot of proportion of variance explained against the number of principle components
+p <- ggplot(data = prop_var_ex, aes(Principal_component, Proportion_of_variance_explained)) +
+  geom_jitter() +
+  ggtitle("Scree plot of variance explained by successive principle components") +
+  theme(plot.title = element_text(hjust = 0.5))
+p
+```
+
+####################################C5.0 without PCA##############################################################
+#set model control parameters
+```{r}
+#set model control paramters
+trctrl <- trainControl(method = "boot", number = 3, verboseIter = FALSE)
+
+#Coerce Meter_state to factor
+df$Meter_State <- factor(df$Meter_State)
+```
+
+#create training and testing sets on whole data set with no noise and no PCA
+```{r}
+set.seed(0)
+
+#Divide data in to 70% training and 30% testing
+inTrain <- createDataPartition(y = df$Meter_State,
+                               p = 0.7,
+                               list = FALSE)
+
+train_nopca <- df[inTrain, ]
+test_nopca <- df[-inTrain, ]
+
+```
+
+
+#create training and testing sets
+```{r}
+#create data frame of pca scores
+
+train.data <- data.frame(pca.flowmeters$x)
+
+#take first 13 principle components
+
+train.data <- train.data[,1:20]
+
+#append meter_state data to principle component data
+
+train.data$Meter_State <- factor(df$Meter_State)
+
+set.seed(0)
+
+#Divide data in to 70% training and 30% testing
+inTrain_PCA <- createDataPartition(y = train.data$Meter_State,
+                               p = 0.7,
+                               list = FALSE)
+
+train_pca <- train.data[inTrain_PCA, ]
+test_pca <- train.data[-inTrain_PCA, ]
+```
+
+
+```{r}
+h <- ggplot(data = train_nopca, aes(x = Meter_State)) +
+  geom_bar(stat = "count", fill = "green") +
+  theme_light() +
+  labs(title = "Training data Meter state distribution (nopca)")
+h
+
+i <- ggplot(data = test_nopca, aes(x = Meter_State)) +
+  geom_bar(stat = "count", fill = "green") +
+  theme_light() +
+  labs(title = "Testing data Meter state distribution (nopca)")
+i
+
+j <- ggplot(data = train_pca, aes(x = Meter_State)) +
+  geom_bar(stat = "count", fill = "green") +
+  theme_light() +
+  labs(title = "Training data Meter state distribution (pca)")
+j
+
+k <- ggplot(data = test_pca, aes(x = Meter_State)) +
+  geom_bar(stat = "count", fill = "green") +
+  theme_light() +
+  labs(title = "Testing data Meter state distribution (pca)")
+k
+```
+
+
+
+
+
+#train classifier
+```{r}
+start_time_C5_nopca <- Sys.time()
+set.seed(0)
+C5_model_nopca <- train(Meter_State ~ .,
+                    data = train_nopca,
+                    method = "C5.0",
+                    preProcess = c("center","scale"),
+                    trControl = trctrl,
+                    Metric = "Accuracy",
+                    tuneGrid = expand.grid(.trials = c(1:20),
+                                           .winnow = FALSE,
+                                           .model = "tree"))
+
+end_time_C5_nopca <- Sys.time()
+
+#display model details
+print(C5_model_nopca)
+
+#predict values using C5.0 model
+pred_C5.test <- predict(C5_model_nopca, test_nopca[,-ncol(test_nopca)], type = "raw")
+pred_C5.train <- predict(C5_model_nopca, train_nopca[,-ncol(train_nopca)], type = "raw")
+
+#evaluate classifier on training set
+table(pred_C5.train, train_nopca$Meter_State)
+
+cat("C5.0 model, without PCA, training set Accuracy; ",
+    mean(pred_C5.train==train_nopca$Meter_State)*100,"%")
+
+#evaluate classifier on test set
+table(pred_C5.test, test_nopca$Meter_State)
+
+cat("C5.0 model, without PCA, test set Accuracy; ", mean(pred_C5.test==test_nopca$Meter_State)*100,"%", "\n", "CPU time =", end_time_C5_nopca - start_time_C5_nopca, "s")
+```
+
+
+
+
+
+########################################C5.0 experiment with PCA#########################################################
+
+
+
+#train classifier
+```{r}
+start_time_C5_pca <- Sys.time()
+set.seed(0)
+C5_PCA_model <- train(Meter_State ~ .,
+                    data = train_pca,
+                    method = "C5.0",
+                    trControl = trctrl,
+                    tuneGrid = expand.grid(.trials = c(1:20), 
+                                           .winnow = FALSE, 
+                                           .model = "tree"))
+end_time_C5_pca <- Sys.time()
+
+#display model details
+print(C5_PCA_model)
+
+#predict values using C5.0 model
+pred_C5_PCA.test <- predict(C5_PCA_model, test_pca[,-ncol(test_pca)], type = "raw")
+pred_C5_PCA.train <- predict(C5_PCA_model, train_pca[,-ncol(train_pca)], type = "raw")
+
+#evaluate classifier on training set
+table(pred_C5_PCA.train, train_pca$Meter_State)
+
+cat("C5.0 model, with PCA, training set Accuracy; ", mean(pred_C5_PCA.train==train_pca$Meter_State)*100,"%")
+
+#evaluate classifier on test set
+table(pred_C5_PCA.test, test_pca$Meter_State)
+
+cat("C5.0 model, with PCA, test set Accuracy; ", mean(pred_C5_PCA.test==test_pca$Meter_State)*100,"%", "\n", "CPU time =", end_time_C5_pca - start_time_C5_pca, "s")
+```
+
+
+####################################SVM model without PCA##############################################################
+
+#train classifier
+```{r}
+start_time_SVM_nopca <- Sys.time()
+set.seed(0)
+SVM_model_nopca <- train(Meter_State ~ .,
+                    data = train_nopca,
+                    method = "svmLinear",
+                    tuneGrid = expand.grid( C = c(1:15)),
+                    trControl = trctrl)
+end_time_SVM_nopca <- Sys.time()
+
+print(SVM_model_nopca)
+
+#predict values using SVM model
+pred_SVM.test <- predict(SVM_model_nopca, test_nopca[,-ncol(test_nopca)], type = "raw")
+pred_SVM.train <- predict(SVM_model_nopca, train_nopca[,-ncol(train_nopca)], type = "raw")
+
+#evaluate classifier on training set
+table(pred_SVM.train, train_nopca$Meter_State)
+
+cat("SVM model without PCA training set Accuracy; ", mean(pred_SVM.train==train_nopca$Meter_State)*100,"%", "\n")
+
+
+#evaluate classifier on test set
+table(pred_SVM.test, test_nopca$Meter_State)
+
+cat("SVM model without PCA test set Accuracy; ",
+    mean(pred_SVM.test==test_nopca$Meter_State)*100,"%", "\n",
+    "CPU time =", end_time_SVM_nopca - start_time_SVM_nopca, "seconds")
+
+```
+
+###############################################SVM model with PCA######################################################################
+
+#train classifier
+```{r}
+start_time_SVM_pca <- Sys.time()
+set.seed(0)
+SVM_PCA_model <- train(Meter_State ~ .,
+                    data = train_pca,
+                    method = "svmLinear",
+                    tuneGrid = expand.grid( C = c(1:15)),
+                    trControl = trctrl)
+end_time_SVM_pca <- Sys.time()
+
+print(SVM_PCA_model)
+
+#predict values using SVM model
+pred_SVM_PCA.test <- predict(SVM_PCA_model, test_pca[,-ncol(test_pca)], type = "raw")
+pred_SVM_PCA.train <- predict(SVM_PCA_model, train_pca[,-ncol(train_pca)], type = "raw")
+
+#evaluate classifier on training set
+table(pred_SVM_PCA.train, train_pca$Meter_State)
+
+cat("SVM model with PCA training set Accuracy; ", mean(pred_SVM_PCA.train==train_pca$Meter_State)*100,"%")
+
+
+#evaluate classifier on test set
+table(pred_SVM_PCA.test, test_pca$Meter_State)
+
+cat("SVM model With PCA test set Accuracy; ", 
+    mean(pred_SVM_PCA.test==test_pca$Meter_State)*100,"%", "\n", 
+    "CPU time =", end_time_SVM_pca - start_time_SVM_pca, "seconds")
+```
+
+
+#######################################Comparison of results###############################################################
+```{r}
+# collect resamples
+results <- resamples(list(C5.0_noPCA=C5_model_nopca, 
+                          C5.0_PCA=C5_PCA_model, 
+                          SVM_noPCA=SVM_model_nopca,
+                          SVM_PCA=SVM_PCA_model))
+
+#Plot resamples as a dotplot with 95% confidence interval
+scales <- list(x=list(relation="free"), y=list(relation= "free"))
+dotplot(results, scales=scales, conf.level = 0.95)
+```
+
+```{r}
+summary(C5_PCA_model$finalModel)
+```
+
